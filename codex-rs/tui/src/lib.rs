@@ -1708,15 +1708,9 @@ async fn run_ratatui_app(
     } = cli;
     let images = shared.into_inner().images;
     let rudder_scrollback_safe = rudder_scrollback_safe || rudder_scrollback_safe_from_env();
-    if rudder_scrollback_safe {
-        config.tui_raw_output_mode = true;
-    }
     custom_terminal::set_scrollback_purge_enabled(!rudder_scrollback_safe);
 
-    let use_alt_screen = determine_alt_screen_mode(
-        no_alt_screen || rudder_scrollback_safe,
-        config.tui_alternate_screen,
-    );
+    let use_alt_screen = determine_alt_screen_mode(no_alt_screen, config.tui_alternate_screen);
     tui.set_alt_screen_enabled(use_alt_screen);
     let mut app_server = match app_server {
         Some(app_server) => app_server,

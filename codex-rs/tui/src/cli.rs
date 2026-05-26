@@ -73,8 +73,9 @@ pub struct Cli {
 
     /// Internal: run in Rudder's embedded-worker scrollback-safe mode.
     ///
-    /// This keeps Codex inline and avoids terminal scrollback purge sequences
-    /// that make parent TUIs lose locally managed worker history.
+    /// This preserves Codex's normal renderer while avoiding terminal
+    /// scrollback purge sequences that make parent TUIs lose locally managed
+    /// worker history.
     #[arg(long = "rudder-scrollback-safe", hide = true, default_value_t = false)]
     pub rudder_scrollback_safe: bool,
 
