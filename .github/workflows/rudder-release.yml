@@ -1,0 +1,46 @@
+name: Rudder Codex release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, e.g. rudder-codex-v0.1.0-upstream-db9cb04"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  build-macos-arm64:
+    runs-on: macos-15
+    steps:
+      - name: Check out fork patch branch
+        uses: actions/checkout@v4
+        with:
+          ref: rudder/main
+
+      - name: Build Codex
+        run: |
+          cd codex-rs
+          cargo build --profile rudder-release -p codex-cli
+
+      - name: Package binary
+        run: |
+          mkdir -p dist
+          cp codex-rs/target/rudder-release/codex dist/rudder-codex-darwin-arm64
+          chmod 755 dist/rudder-codex-darwin-arm64
+          gzip -kf9 dist/rudder-codex-darwin-arm64
+          split -b 5m -d -a 2 dist/rudder-codex-darwin-arm64.gz dist/rudder-codex-darwin-arm64.gz.part-
+          shasum -a 256 dist/rudder-codex-darwin-arm64.gz > dist/rudder-codex-darwin-arm64.gz.sha256
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: |
+          gh release create "$TAG" \
+            dist/rudder-codex-darwin-arm64.gz.part-* \
+            dist/rudder-codex-darwin-arm64.gz.sha256 \
+            --title "$TAG" \
+            --notes "Rudder Codex fork release built from $(git rev-parse --short HEAD)."

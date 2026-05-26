@@ -1,0 +1,49 @@
+name: Rudder upstream sync
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 10 * * *"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out fork patch branch
+        uses: actions/checkout@v4
+        with:
+          ref: rudder/main
+          fetch-depth: 0
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch upstream
+        run: |
+          git remote add upstream https://github.com/openai/codex.git || true
+          git fetch upstream main
+          git fetch origin main rudder/main
+
+      - name: Mirror upstream main
+        run: |
+          git switch main || git switch -c main origin/main
+          git reset --hard upstream/main
+          git push origin main --force-with-lease
+
+      - name: Rebase Rudder patch branch
+        run: |
+          git switch rudder/main
+          git rebase upstream/main
+          git push origin rudder/main --force-with-lease
+
+      - name: Test Rudder TUI patch
+        run: |
+          cd codex-rs
+          cargo test --profile ci-test -p codex-tui rudder_safe_mode --lib
+          cargo test --profile ci-test -p codex-tui alternate_screen_auto_uses_alt_screen --lib

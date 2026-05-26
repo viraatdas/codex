@@ -23,6 +23,7 @@
 // SOFTWARE.
 use std::io;
 use std::io::Write;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::cursor::MoveTo;
 use crossterm::cursor::SetCursorStyle;
@@ -45,6 +46,21 @@ use ratatui::style::Color;
 use ratatui::style::Modifier;
 use ratatui::widgets::WidgetRef;
 use unicode_width::UnicodeWidthStr;
+
+static SCROLLBACK_PURGE_ENABLED: AtomicBool = AtomicBool::new(true);
+
+/// Enable or disable terminal scrollback purge operations globally for this TUI process.
+///
+/// Rudder embeds Codex inside its own worker pane and owns pane scrollback itself. In that
+/// mode, Codex must not emit ED3 / purge sequences because the parent TUI cannot distinguish
+/// intentional Codex transcript repair from destructive worker-history erasure.
+pub fn set_scrollback_purge_enabled(enabled: bool) {
+    SCROLLBACK_PURGE_ENABLED.store(enabled, Ordering::Relaxed);
+}
+
+fn scrollback_purge_enabled() -> bool {
+    SCROLLBACK_PURGE_ENABLED.load(Ordering::Relaxed)
+}
 
 /// Returns the display width of a cell symbol, ignoring OSC escape sequences.
 ///
@@ -497,6 +513,10 @@ where
         if self.viewport_area.is_empty() {
             return Ok(());
         }
+        if !scrollback_purge_enabled() {
+            self.previous_buffer_mut().reset();
+            return Ok(());
+        }
         let home = Position { x: 0, y: 0 };
         // Use an explicit cursor-home around scrollback purge for terminals that
         // are sensitive to inline viewport cursor placement (e.g. Terminal.app).
@@ -530,6 +550,9 @@ where
     pub fn clear_scrollback_and_visible_screen_ansi(&mut self) -> io::Result<()> {
         if self.viewport_area.is_empty() {
             return Ok(());
+        }
+        if !scrollback_purge_enabled() {
+            return self.clear_visible_screen();
         }
 
         // Reset scroll region + style state, home cursor, clear screen, purge scrollback.
@@ -771,6 +794,22 @@ mod tests {
     use ratatui::backend::WindowSize;
     use ratatui::layout::Rect;
     use ratatui::style::Style;
+    use std::sync::Mutex;
+
+    static SCROLLBACK_PURGE_TEST_LOCK: Mutex<()> = Mutex::new(());
+
+    struct ScrollbackPurgeReset;
+
+    impl Drop for ScrollbackPurgeReset {
+        fn drop(&mut self) {
+            set_scrollback_purge_enabled(true);
+        }
+    }
+
+    fn set_test_scrollback_purge(enabled: bool) -> ScrollbackPurgeReset {
+        set_scrollback_purge_enabled(enabled);
+        ScrollbackPurgeReset
+    }
 
     struct CaptureBackend {
         output: Vec<u8>,
@@ -959,6 +998,62 @@ mod tests {
         assert!(
             actual.contains(&expected),
             "expected terminal output to contain cursor style reset {expected:?}, got {actual:?}"
+        );
+    }
+
+    #[test]
+    fn clear_scrollback_uses_purge_by_default() {
+        let _guard = SCROLLBACK_PURGE_TEST_LOCK.lock().expect("lock");
+        let _reset = set_test_scrollback_purge(true);
+        let mut terminal =
+            Terminal::with_options(CaptureBackend::new(/*width*/ 4, /*height*/ 2))
+                .expect("terminal");
+        terminal.set_viewport_area(Rect::new(0, 0, 4, 2));
+
+        terminal.clear_scrollback().expect("clear scrollback");
+
+        assert!(
+            terminal.backend().output().contains("\x1b[3J"),
+            "expected clear_scrollback to emit ED3 purge by default, got {:?}",
+            terminal.backend().output()
+        );
+    }
+
+    #[test]
+    fn rudder_safe_mode_suppresses_scrollback_purge() {
+        let _guard = SCROLLBACK_PURGE_TEST_LOCK.lock().expect("lock");
+        let _reset = set_test_scrollback_purge(false);
+        let mut terminal =
+            Terminal::with_options(CaptureBackend::new(/*width*/ 4, /*height*/ 2))
+                .expect("terminal");
+        terminal.set_viewport_area(Rect::new(0, 0, 4, 2));
+
+        terminal.clear_scrollback().expect("clear scrollback");
+
+        assert!(
+            !terminal.backend().output().contains("\x1b[3J"),
+            "expected Rudder-safe clear_scrollback not to emit ED3 purge, got {:?}",
+            terminal.backend().output()
+        );
+    }
+
+    #[test]
+    fn rudder_safe_mode_removes_purge_from_hard_reset() {
+        let _guard = SCROLLBACK_PURGE_TEST_LOCK.lock().expect("lock");
+        let _reset = set_test_scrollback_purge(false);
+        let mut terminal =
+            Terminal::with_options(CaptureBackend::new(/*width*/ 4, /*height*/ 2))
+                .expect("terminal");
+        terminal.set_viewport_area(Rect::new(0, 0, 4, 2));
+
+        terminal
+            .clear_scrollback_and_visible_screen_ansi()
+            .expect("hard reset");
+
+        assert!(
+            !terminal.backend().output().contains("\x1b[3J"),
+            "expected Rudder-safe hard reset not to emit ED3 purge, got {:?}",
+            terminal.backend().output()
         );
     }
 }

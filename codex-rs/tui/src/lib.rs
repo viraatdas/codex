@@ -62,6 +62,7 @@ use codex_utils_oss::ensure_oss_provider_ready;
 use codex_utils_oss::get_default_model_for_oss_provider;
 use color_eyre::eyre::WrapErr;
 use cwd_prompt::CwdPromptAction;
+use std::env;
 use std::fs::OpenOptions;
 use std::path::Path;
 use std::path::PathBuf;
@@ -1702,11 +1703,20 @@ async fn run_ratatui_app(
         prompt,
         shared,
         no_alt_screen,
+        rudder_scrollback_safe,
         ..
     } = cli;
     let images = shared.into_inner().images;
+    let rudder_scrollback_safe = rudder_scrollback_safe || rudder_scrollback_safe_from_env();
+    if rudder_scrollback_safe {
+        config.tui_raw_output_mode = true;
+    }
+    custom_terminal::set_scrollback_purge_enabled(!rudder_scrollback_safe);
 
-    let use_alt_screen = determine_alt_screen_mode(no_alt_screen, config.tui_alternate_screen);
+    let use_alt_screen = determine_alt_screen_mode(
+        no_alt_screen || rudder_scrollback_safe,
+        config.tui_alternate_screen,
+    );
     tui.set_alt_screen_enabled(use_alt_screen);
     let mut app_server = match app_server {
         Some(app_server) => app_server,
@@ -1842,6 +1852,11 @@ fn determine_alt_screen_mode(no_alt_screen: bool, tui_alternate_screen: AltScree
     }
 
     tui_alternate_screen != AltScreenMode::Never
+}
+
+fn rudder_scrollback_safe_from_env() -> bool {
+    env::var_os("CODEX_RUDDER_SCROLLBACK_SAFE")
+        .is_some_and(|value| !value.is_empty() && value.to_string_lossy() != "0")
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

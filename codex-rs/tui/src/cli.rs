@@ -71,6 +71,13 @@ pub struct Cli {
     #[arg(long = "no-alt-screen", default_value_t = false)]
     pub no_alt_screen: bool,
 
+    /// Internal: run in Rudder's embedded-worker scrollback-safe mode.
+    ///
+    /// This keeps Codex inline and avoids terminal scrollback purge sequences
+    /// that make parent TUIs lose locally managed worker history.
+    #[arg(long = "rudder-scrollback-safe", hide = true, default_value_t = false)]
+    pub rudder_scrollback_safe: bool,
+
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,
 }
